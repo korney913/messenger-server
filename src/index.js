@@ -8,19 +8,25 @@ const app = express();
 app.use(express.json());
 
 // Чистим и нормализуем privateKey
-let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-if (privateKey) {
-  privateKey = privateKey
-    .trim()                  // удаляем пробелы по краям
-    .replace(/^"|"$/g, "")   // убираем кавычки по краям, если есть
-    .replace(/\\n/g, "\n"); // настоящие переносы строк
+let projectId = process.env.FIREBASE_PROJECT_ID;
+if (projectId) {
+  projectId = projectId.trim().replace(/^"|"$/g, "");
 }
 
-// Инициализация Firebase Admin через ENV
+let clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+if (clientEmail) {
+  clientEmail = clientEmail.trim().replace(/^"|"$/g, "");
+}
+
+let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+if (privateKey) {
+  privateKey = privateKey.trim().replace(/^"|"$/g, "").replace(/\\n/g, "\n");
+}
+
 admin.initializeApp({
   credential: admin.credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    projectId,
+    clientEmail,
     privateKey,
   }),
 });
