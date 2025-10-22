@@ -1,20 +1,18 @@
-// index.js — с Firebase Admin SDK
+// index.js — Firebase Admin SDK через ENV
 const express = require("express");
 const admin = require("firebase-admin");
 
-const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT;
 const AUTH_SECRET = process.env.AUTH_SECRET;
 
 const app = express();
 app.use(express.json());
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-
+// Инициализация Firebase Admin через отдельные переменные
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   }),
 });
 
@@ -23,12 +21,12 @@ app.post("/send-notification", async (req, res) => {
   const { token, title, body } = req.body;
 
   const message = {
-    token: token,
+    token,
     notification: {
       title: title || "Новое сообщение",
-      body: body || "Привет! У тебя новое сообщение 👋"
+      body: body || "Привет! У тебя новое сообщение 👋",
     },
-    android: { priority: "high" }
+    android: { priority: "high" },
   };
 
   try {
