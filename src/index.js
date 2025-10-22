@@ -2,11 +2,12 @@
 const express = require("express");
 const admin = require("firebase-admin");
 
+const FCM_SERVER_KEY = process.env.FCM_SERVER_KEY;
+const AUTH_SECRET = process.env.AUTH_SECRET;
+const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT;
+
 const app = express();
 app.use(express.json());
-
-// Инициализация Firebase Admin из твоего serviceAccountKey.json
-const serviceAccount = require("./serviceAccountKey.json");
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
