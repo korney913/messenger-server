@@ -9,6 +9,8 @@ const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT;
 const app = express();
 app.use(express.json());
 
+const serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT);
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
