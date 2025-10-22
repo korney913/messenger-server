@@ -23,6 +23,10 @@ if (privateKey) {
   privateKey = privateKey.trim().replace(/^"|"$/g, "").replace(/\\n/g, "\n");
 }
 
+console.log("projectId:", process.env.FIREBASE_PROJECT_ID);
+console.log("clientEmail:", process.env.FIREBASE_CLIENT_EMAIL);
+console.log("privateKey length:", process.env.FIREBASE_PRIVATE_KEY?.length || 0);
+
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId,
