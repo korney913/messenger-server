@@ -1,64 +1,37 @@
-// index.js — Node.js сервер для отправки FCM пушей
-const express = require('express');
-const fetch = require('node-fetch');
+// index.js — с Firebase Admin SDK
+const express = require("express");
+const admin = require("firebase-admin");
 
 const app = express();
 app.use(express.json());
 
-// URL FCM (Legacy API)
-const FCM_URL = "https://fcm.googleapis.com/fcm/send";
+// Инициализация Firebase Admin из твоего serviceAccountKey.json
+const serviceAccount = require("./serviceAccountKey.json");
 
-// Берём ключ из переменной окружения
-const FCM_SERVER_KEY = process.env.FCM_SERVER_KEY;
-const AUTH_SECRET = process.env.AUTH_SECRET || "dev-secret";
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
-if (!FCM_SERVER_KEY) {
-  console.error("ERROR: FCM_SERVER_KEY не установлен в переменных окружения.");
-  process.exit(1);
-}
-
-// Простой health-check
-app.get("/", (req, res) => res.send("messenger-server работает"));
-
-// Endpoint для отправки пушей
+// POST /send-notification
 app.post("/send-notification", async (req, res) => {
-  const auth = req.header("Authorization") || "";
-  if (!auth.startsWith("Bearer ")) return res.status(401).json({ error: "Отсутствует Authorization" });
-  const token = auth.split(" ")[1];
-  if (token !== AUTH_SECRET) return res.status(403).json({ error: "Доступ запрещён" });
+  const { token, title, body } = req.body;
 
-  const { tokens, token: singleToken, title, body, data } = req.body;
-
-  const recipients = Array.isArray(tokens) ? tokens : (singleToken ? [singleToken] : []);
-  if (recipients.length === 0) return res.status(400).json({ error: "Не указан токен устройства" });
-
-  const payload = {
-    registration_ids: recipients,
+  const message = {
+    token: token,
     notification: {
       title: title || "Новое сообщение",
-      body: body || ""
+      body: body || "Привет! У тебя новое сообщение 👋"
     },
-    data: data || {}
+    android: { priority: "high" }
   };
 
   try {
-    const response = await fetch(FCM_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `key=${FCM_SERVER_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    const json = await response.json();
-    return res.json({ success: true, fcmResponse: json });
-  } catch (err) {
-    console.error("Ошибка FCM:", err);
-    return res.status(500).json({ error: "Ошибка отправки FCM", details: err.toString() });
+    const response = await admin.messaging().send(message);
+    res.json({ success: true, messageId: response });
+  } catch (error) {
+    console.error("Ошибка отправки FCM:", error);
+    res.status(500).json({ error: "Ошибка FCM", details: error });
   }
 });
 
-// Запуск сервера
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server запущен на порту ${PORT}`));
+app.listen(3000, () => console.log("Server запущен на порту 3000"));
