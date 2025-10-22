@@ -40,3 +40,17 @@ app.post("/send-notification", async (req, res) => {
       body: body || "Привет! У тебя новое сообщение 👋",
     },
     android: { priority: "high" },
+  };
+
+  try {
+    const response = await admin.messaging().send(message);
+    res.json({ success: true, messageId: response });
+  } catch (error) {
+    console.error("Ошибка отправки FCM:", error);
+    res.status(500).json({ error: "Ошибка FCM", details: error });
+  }
+});
+
+// Запуск сервера
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server запущен на порту ${PORT}`));
