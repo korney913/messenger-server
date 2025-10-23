@@ -1,158 +1,71 @@
-// index.js — Render: Firestore listener -> FCM sender (prod-ready)
+// index.js — уведомления всем участникам чата, кроме отправителя
 const express = require("express");
 const admin = require("firebase-admin");
 
 const app = express();
 app.use(express.json());
 
-// Нормализация ENV
+// === Инициализация Firebase ===
 const norm = (v) => (typeof v === "string" ? v.trim().replace(/^"|"$/g, "") : "");
 const projectId = norm(process.env.FIREBASE_PROJECT_ID);
 const clientEmail = norm(process.env.FIREBASE_CLIENT_EMAIL);
 let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 if (privateKey) privateKey = norm(privateKey).replace(/\\n/g, "\n");
 
-// Простая валидация ENV
 if (!projectId || !clientEmail || !privateKey) {
-  console.error("Missing Firebase ENV vars. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY");
+  console.error("❌ Missing Firebase ENV vars");
   process.exit(1);
 }
 
-// Инициализация Admin SDK
 admin.initializeApp({
   credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
 });
 const db = admin.firestore();
 const fcm = admin.messaging();
 
-console.log("Firebase Admin initialized, Firestore listener will start.");
+console.log("✅ Firebase Admin initialized");
 
-// Конфиг
-const WATCH_COLLECTION = "Chats"; // коллекция для наблюдения
-const NOTIFIED_FIELD = "notified"; // флаг, что уведомление отправлено
+// === Константы ===
+const CHATS_COLLECTION = "Chats";
+const MESSAGES_SUBCOLLECTION = "Messages";
+const MAX_BATCH = 500;
 
-// =====================
-// Функция для теста: возвращает токен вручную
-async function getTokensForDoc(docData) {
+// === Получение токенов участников чата, кроме отправителя ===
+async function getTokensForChat(chatId, senderUid) {
   try {
-    const TEST_UID = "VLdBRDuBnxWCrwF5h1hnTUiXeyv1"; 
-    const userSnap = await db.collection("Users").doc(TEST_UID).get();
-    if (!userSnap.exists) {
-      console.log("Пользователь не найден:", TEST_UID);
+    const chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
+    const chatSnap = await chatRef.get();
+
+    if (!chatSnap.exists) {
+      console.log("⚠️ Чат не найден:", chatId);
       return [];
     }
 
-    const userData = userSnap.data();
-    if (userData && userData.token) {
-      console.log(" Получен токен пользователя:", userData.token);
-      return [userData.token];
-    } else {
-      console.log("У пользователя нет токена.");
+    const chatData = chatSnap.data();
+    const participants = chatData.participants || [];
+    const recipients = participants.filter((uid) => uid !== senderUid);
+
+    if (recipients.length === 0) {
+      console.log("⚠️ Нет получателей уведомления (все — отправитель)");
       return [];
     }
+
+    // Получаем токены пользователей
+    const tokens = [];
+    for (const uid of recipients) {
+      const userSnap = await db.collection("Users").doc(uid).get();
+      if (userSnap.exists) {
+        const userData = userSnap.data();
+        if (userData.token) {
+          tokens.push(userData.token);
+        }
+      }
+    }
+
+    console.log(`🎯 Получено ${tokens.length} токенов для чата ${chatId}`);
+    return tokens;
   } catch (err) {
-    console.error(" Ошибка при получении токена пользователя:", err);
+    console.error("❌ Ошибка при получении токенов:", err);
     return [];
   }
 }
-
-
-// Отправка уведомления
-async function sendNotificationsToTokens(tokens, messagePayload) {
-  if (!tokens || tokens.length === 0) return { successCount: 0 };
-
-  let success = 0;
-
-  for (const token of tokens) {
-    const message = {
-      token,
-      notification: messagePayload.notification,
-      android: messagePayload.android,
-      data: messagePayload.data,
-    };
-
-    try {
-      await fcm.send(message);
-      success += 1;
-    } catch (err) {
-      console.error("send error for token:", token, err.message);
-    }
-  }
-
-  return { successCount: success };
-}
-
-// Обработчик нового документа
-async function handleNewDoc(doc) {
-  const docRef = doc.ref;
-  const data = doc.data();
-  if (!data) return;
-
-  // Если уже уведомлено — игнорируем
-  if (data[NOTIFIED_FIELD]) {
-    console.log(`Doc already notified: ${docRef.id}`);
-    return;
-  }
-
-  console.log(`handleNewDoc triggered for doc: ${docRef.id}`);
-
-  // Получаем токены
-  const tokens = await getTokensForDoc(data);
-  if (!tokens || tokens.length === 0) {
-    console.log("No tokens for doc:", docRef.id);
-    return;
-  }
-
-  // Формируем сообщение
-  const messagePayload = {
-    notification: {
-      title: "📁 Новый чат",
-      body: `Создан новый чат с ID: ${docRef.id}`,
-    },
-    android: { priority: "high" },
-    data: { chatId: docRef.id },
-  };
-
-  const result = await sendNotificationsToTokens(tokens, messagePayload);
-  console.log(`Sent ${result.successCount} notifications for doc ${docRef.id}`);
-
-  // Помечаем документ как уведомленный
-  await docRef.update({ [NOTIFIED_FIELD]: true });
-}
-
-// Прослушивание коллекции
-function startListener() {
-  console.log(`Starting listener on collection "${WATCH_COLLECTION}"`);
-  db.collection(WATCH_COLLECTION)
-    .where(NOTIFIED_FIELD, "==", false)
-    .onSnapshot((snapshot, err) => {
-      if (err) {
-        console.error("onSnapshot listener error:", err);
-        return;
-      }
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === "added") {
-          handleNewDoc(change.doc).catch((e) => console.error("handleNewDoc error:", e));
-        }
-      });
-    });
-}
-
-// Запуск listener
-startListener();
-
-// HTTP endpoint для теста
-app.post("/send-notification-test", async (req, res) => {
-  const { tokens, title, body } = req.body;
-  if (!tokens || !tokens.length) return res.status(400).json({ error: "No tokens" });
-
-  const payload = {
-    notification: { title: title || "Тест", body: body || "Тестовое уведомление" },
-    android: { priority: "high" },
-  };
-  const r = await sendNotificationsToTokens(tokens, payload);
-  res.json({ sent: r.successCount });
-});
-
-// Держим процесс живым
-app.listen(3000, () => console.log(`Server running on port 3000`));
