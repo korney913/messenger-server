@@ -41,23 +41,26 @@ async function getTokensForDoc(docData) {
 // Отправка уведомления
 async function sendNotificationsToTokens(tokens, messagePayload) {
   if (!tokens || tokens.length === 0) return { successCount: 0 };
-  try {
-    const resp = await fcm.sendMulticast({
-      tokens,
+
+  let success = 0;
+
+  for (const token of tokens) {
+    const message = {
+      token,
       notification: messagePayload.notification,
       android: messagePayload.android,
       data: messagePayload.data,
-    });
-    resp.responses.forEach((r, idx) => {
-      if (!r.success) {
-        console.log("Invalid token:", tokens[idx], r.error?.message);
-      }
-    });
-    return { successCount: resp.successCount };
-  } catch (err) {
-    console.error("sendMulticast error:", err);
-    return { successCount: 0 };
+    };
+
+    try {
+      await fcm.send(message);
+      success += 1;
+    } catch (err) {
+      console.error("send error for token:", token, err.message);
+    }
   }
+
+  return { successCount: success };
 }
 
 // Обработчик нового документа
