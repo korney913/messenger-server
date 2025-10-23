@@ -69,18 +69,8 @@ async function markNotified(docRef) {
 // Пример: как получить список токенов для уведомления
 // В реальности у тебя может быть поле tokens: [] в документе, или нужно найти подписчиков в users collection
 async function getTokensForDoc(docData) {
-  // Пример 1: если docData.tokens массив — используем его
-  if (Array.isArray(docData.tokens) && docData.tokens.length) return docData.tokens;
-  // Пример 2: док содержит ownerId, и мы ищем токен в users/{ownerId}
-  if (docData.ownerId) {
-    const userSnap = await db.collection("users").doc(docData.ownerId).get();
-    if (userSnap.exists) {
-      const user = userSnap.data();
-      if (user && Array.isArray(user.tokens)) return user.tokens;
-      if (user && typeof user.fcmToken === "string") return [user.fcmToken];
-    }
-  }
-  return [];
+ const TEST_TOKEN = "cF2Izli0RtGDjnmjQEhNEm:APA91bHB_kvdGSjfmra5MeMrSZZbwpiU0vI21mqJ5j43cQmRk9bkZfzO0C6wMKcSBVRzlToI-cUmHSc0DByMTYVGgTosUp7LJVxmPdqOAxh46KyzBKFW0Xw";
+   return [TEST_TOKEN];
 }
 
 // Отправка батчами
