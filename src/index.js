@@ -5,7 +5,7 @@ const admin = require("firebase-admin");
 const app = express();
 app.use(express.json());
 
-// Нормализация ENV
+// ====== Нормализация ENV ======
 const norm = (v) => (typeof v === "string" ? v.trim().replace(/^"|"$/g, "") : "");
 const projectId = norm(process.env.FIREBASE_PROJECT_ID);
 const clientEmail = norm(process.env.FIREBASE_CLIENT_EMAIL);
@@ -18,24 +18,24 @@ if (!projectId || !clientEmail || !privateKey) {
   process.exit(1);
 }
 
-// Инициализация Admin SDK
+// ====== Инициализация Admin SDK ======
 admin.initializeApp({
   credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
 });
 const db = admin.firestore();
+const fcm = admin.messaging();
 
 console.log("Firebase Admin initialized, Firestore listener will start.");
 
-// Конфиг
-const WATCH_COLLECTION = "Chats"; // коллекция для прослушки
+// ====== Конфиг ======
+const WATCH_COLLECTION = "Chats"; // коллекция для слежения
 const CLAIM_FIELD = "notificationClaim"; // поле для claim / lock
 const NOTIFIED_FIELD = "notified"; // флаг, что уведомление отправлено
-const MAX_BATCH = 500; // sendMulticast максимум 500 токенов
 
-// Уникальный id инстанса для claim
-const instanceId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+// уникальный id инстанса, чтобы не гонять один и тот же doc несколько раз
+const instanceId = `${Date.now()}_${Math.random().toString(36).slice(2,10)}`;
 
-// Попытка захватить документ транзакционно
+// ====== Попытка "захватить" документ ======
 async function tryClaimDoc(docRef) {
   try {
     return await db.runTransaction(async (tx) => {
@@ -53,74 +53,60 @@ async function tryClaimDoc(docRef) {
   }
 }
 
-// Пометка документа как отправленного
+// ====== Пометить документ как уведомленный ======
 async function markNotified(docRef) {
   try {
-    await docRef.update({
-      [NOTIFIED_FIELD]: true,
-      [CLAIM_FIELD]: admin.firestore.FieldValue.delete()
-    });
+    await docRef.update({ [NOTIFIED_FIELD]: true, [CLAIM_FIELD]: admin.firestore.FieldValue.delete() });
   } catch (err) {
     console.error("markNotified error:", err);
   }
 }
 
-// Возвращает токены для уведомления (тестовый вариант)
+// ====== Получение токенов для уведомления ======
 async function getTokensForDoc(docData) {
-  // Тестовый токен — замените на свой
+  // Тестовый токен FCM — для проверки
   const TEST_TOKEN = "cF2Izli0RtGDjnmjQEhNEm:APA91bHB_kvdGSjfmra5MeMrSZZbwpiU0vI21mqJ5j43cQmRk9bkZfzO0C6wMKcSBVRzlToI-cUmHSc0DByMTYVGgTosUp7LJVxmPdqOAxh46KyzBKFW0Xw";
   return [TEST_TOKEN];
 }
 
-// Отправка уведомлений батчами
+// ====== Отправка уведомлений по одному токену ======
 async function sendNotificationsToTokens(tokens, messagePayload) {
   if (!tokens || tokens.length === 0) return { successCount: 0 };
 
   let success = 0;
-  for (let i = 0; i < tokens.length; i += MAX_BATCH) {
-    const batch = tokens.slice(i, i + MAX_BATCH);
-    const multicast = {
-      tokens: batch,
-      notification: messagePayload.notification,
-      android: messagePayload.android,
-      apns: messagePayload.apns,
-      data: messagePayload.data,
-    };
-
+  for (const token of tokens) {
+    const msg = { ...messagePayload, token };
     try {
-      const resp = await admin.messaging().sendMulticast(multicast);
-      success += resp.successCount;
-
-      // обработка невалидных токенов
-      resp.responses.forEach((r, idx) => {
-        if (!r.success) {
-          const err = r.error;
-          if (err && (err.code === 'messaging/registration-token-not-registered' ||
-                      err.code === 'messaging/invalid-registration-token')) {
-            console.log("Invalid token, should delete:", batch[idx]);
-          }
-        }
-      });
+      await fcm.send(msg);
+      success++;
     } catch (err) {
-      console.error("sendMulticast error:", err);
+      console.error("send error for token:", token, err);
     }
   }
-
   return { successCount: success };
 }
 
-// Обработчик нового документа
+// ====== Обработка нового документа ======
 async function handleNewDoc(doc) {
+  console.log("handleNewDoc triggered for doc:", doc.id);
   const docRef = doc.ref;
   const data = doc.data();
   if (!data) return;
 
-  if (data[NOTIFIED_FIELD]) return;
+  if (data[NOTIFIED_FIELD]) {
+    console.log("Doc already notified:", docRef.id);
+    return;
+  }
 
   const claimed = await tryClaimDoc(docRef);
-  if (!claimed) return;
+  if (!claimed) {
+    console.log("Doc not claimed, skipping:", docRef.id);
+    return;
+  }
 
   const tokens = await getTokensForDoc(data);
+  console.log("Tokens to notify:", tokens);
+
   if (!tokens || tokens.length === 0) {
     console.log("No tokens for doc:", docRef.id);
     await docRef.update({ [CLAIM_FIELD]: admin.firestore.FieldValue.delete() });
@@ -129,20 +115,24 @@ async function handleNewDoc(doc) {
 
   const messagePayload = {
     notification: {
-      title: "📁 Новый файл",
-      body: data.name ? `${data.name} был загружен` : "Новый файл",
+      title: "📁 Новый чат",
+      body: data.participants ? `Новый чат с ${data.participants.join(", ")}` : "Новый чат",
     },
     android: { priority: "high" },
-    data: { fileId: docRef.id },
+    data: { chatId: docRef.id },
   };
 
-  const result = await sendNotificationsToTokens(tokens, messagePayload);
-  console.log(`Sent ${result.successCount} notifications for doc ${docRef.id}`);
+  try {
+    const result = await sendNotificationsToTokens(tokens, messagePayload);
+    console.log(`Sent ${result.successCount} notifications for doc ${docRef.id}`);
+  } catch (err) {
+    console.error("handleNewDoc sendNotifications error:", err);
+  }
 
   await markNotified(docRef);
 }
 
-// Прослушивание коллекции
+// ====== Слушатель коллекции ======
 function startListener() {
   console.log(`Starting listener on collection "${WATCH_COLLECTION}"`);
   db.collection(WATCH_COLLECTION)
@@ -158,10 +148,10 @@ function startListener() {
     });
 }
 
-// Запуск listener
+// ====== Запуск listener'а ======
 startListener();
 
-// HTTP endpoint для теста
+// ====== HTTP endpoint для теста ======
 app.post("/send-notification-test", async (req, res) => {
   const { tokens, title, body } = req.body;
   if (!tokens || !tokens.length) return res.status(400).json({ error: "No tokens" });
@@ -174,6 +164,6 @@ app.post("/send-notification-test", async (req, res) => {
   res.json({ sent: r.successCount });
 });
 
-// Держим процесс живым
+// ====== Держим процесс живым ======
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
