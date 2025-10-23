@@ -34,9 +34,28 @@ const NOTIFIED_FIELD = "notified"; // флаг, что уведомление о
 // =====================
 // Функция для теста: возвращает токен вручную
 async function getTokensForDoc(docData) {
-  const TEST_TOKEN = "cF2Izli0RtGDjnmjQEhNEm:APA91bHB_kvdGSjfmra5MeMrSZZbwpiU0vI21mqJ5j43cQmRk9bkZfzO0C6wMKcSBVRzlToI-cUmHSc0DByMTYVGgTosUp7LJVxmPdqOAxh46KyzBKFW0Xw";
-  return [TEST_TOKEN];
+  try {
+    const TEST_UID = "VLdBRDuBnxWCrwF5h1hnTUiXeyv1"; 
+    const userSnap = await db.collection("Users").doc(TEST_UID).get();
+    if (!userSnap.exists) {
+      console.log("Пользователь не найден:", TEST_UID);
+      return [];
+    }
+
+    const userData = userSnap.data();
+    if (userData && userData.token) {
+      console.log(" Получен токен пользователя:", userData.token);
+      return [userData.token];
+    } else {
+      console.log("У пользователя нет токена.");
+      return [];
+    }
+  } catch (err) {
+    console.error(" Ошибка при получении токена пользователя:", err);
+    return [];
+  }
 }
+
 
 // Отправка уведомления
 async function sendNotificationsToTokens(tokens, messagePayload) {
