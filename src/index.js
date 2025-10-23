@@ -12,7 +12,7 @@ const clientEmail = norm(process.env.FIREBASE_CLIENT_EMAIL);
 let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 if (privateKey) privateKey = norm(privateKey).replace(/\\n/g, "\n");
 
-// Простая валидация ENV (в проде лучше логировать и alert'ы)
+// Простая валидация ENV
 if (!projectId || !clientEmail || !privateKey) {
   console.error("Missing Firebase ENV vars. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY");
   process.exit(1);
@@ -23,22 +23,19 @@ admin.initializeApp({
   credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
 });
 const db = admin.firestore();
-const fcm = admin.messaging();
 
 console.log("Firebase Admin initialized, Firestore listener will start.");
 
 // Конфиг
-const WATCH_COLLECTION = "Chats"; // <- поменяй на свою коллекцию
+const WATCH_COLLECTION = "Chats"; // коллекция для прослушки
 const CLAIM_FIELD = "notificationClaim"; // поле для claim / lock
 const NOTIFIED_FIELD = "notified"; // флаг, что уведомление отправлено
 const MAX_BATCH = 500; // sendMulticast максимум 500 токенов
 
-// Функция чтоб попытаться "захватить" документ: atomically set claim to this instance id
-const instanceId = `${Date.now()}_${Math.random().toString(36).slice(2,10)}`;
+// Уникальный id инстанса для claim
+const instanceId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
-// Попытка пометить документ транзакционно: если NOTIFIED_FIELD уже true => пропустить.
-// иначе установить CLAIM_FIELD = instanceId.
-// Возвращает true если claim поставлен успешно и NOTIFIED_FIELD был false.
+// Попытка захватить документ транзакционно
 async function tryClaimDoc(docRef) {
   try {
     return await db.runTransaction(async (tx) => {
@@ -46,7 +43,6 @@ async function tryClaimDoc(docRef) {
       if (!snap.exists) return false;
       const data = snap.data();
       if (data && data[NOTIFIED_FIELD]) return false;
-      // если уже кто-то пометил claim — пропускаем (можно проверять CLAIM_FIELD тоже)
       if (data && data[CLAIM_FIELD] && data[CLAIM_FIELD] !== instanceId) return false;
       tx.update(docRef, { [CLAIM_FIELD]: instanceId });
       return true;
@@ -57,23 +53,26 @@ async function tryClaimDoc(docRef) {
   }
 }
 
-// После успешной отправки — пометим документ notified:true и удалим claim
+// Пометка документа как отправленного
 async function markNotified(docRef) {
   try {
-    await docRef.update({ [NOTIFIED_FIELD]: true, [CLAIM_FIELD]: admin.firestore.FieldValue.delete() });
+    await docRef.update({
+      [NOTIFIED_FIELD]: true,
+      [CLAIM_FIELD]: admin.firestore.FieldValue.delete()
+    });
   } catch (err) {
     console.error("markNotified error:", err);
   }
 }
 
-// Пример: как получить список токенов для уведомления
-// В реальности у тебя может быть поле tokens: [] в документе, или нужно найти подписчиков в users collection
+// Возвращает токены для уведомления (тестовый вариант)
 async function getTokensForDoc(docData) {
- const TEST_TOKEN = "cF2Izli0RtGDjnmjQEhNEm:APA91bHB_kvdGSjfmra5MeMrSZZbwpiU0vI21mqJ5j43cQmRk9bkZfzO0C6wMKcSBVRzlToI-cUmHSc0DByMTYVGgTosUp7LJVxmPdqOAxh46KyzBKFW0Xw";
-   return [TEST_TOKEN];
+  // Тестовый токен — замените на свой
+  const TEST_TOKEN = "cF2Izli0RtGDjnmjQEhNEm:APA91bHB_kvdGSjfmra5MeMrSZZbwpiU0vI21mqJ5j43cQmRk9bkZfzO0C6wMKcSBVRzlToI-cUmHSc0DByMTYVGgTosUp7LJVxmPdqOAxh46KyzBKFW0Xw";
+  return [TEST_TOKEN];
 }
 
-// Отправка батчами
+// Отправка уведомлений батчами
 async function sendNotificationsToTokens(tokens, messagePayload) {
   if (!tokens || tokens.length === 0) return { successCount: 0 };
 
@@ -87,51 +86,47 @@ async function sendNotificationsToTokens(tokens, messagePayload) {
       apns: messagePayload.apns,
       data: messagePayload.data,
     };
+
     try {
-      const resp = await fcm.sendMulticast(multicast);
+      const resp = await admin.messaging().sendMulticast(multicast);
       success += resp.successCount;
+
       // обработка невалидных токенов
       resp.responses.forEach((r, idx) => {
         if (!r.success) {
           const err = r.error;
-          if (err && (err.code === 'messaging/registration-token-not-registered' || err.code === 'messaging/invalid-registration-token')) {
-            // TODO: удалить этот токен из БД (user.tokens)
+          if (err && (err.code === 'messaging/registration-token-not-registered' ||
+                      err.code === 'messaging/invalid-registration-token')) {
             console.log("Invalid token, should delete:", batch[idx]);
-            // Здесь можно пометить в users collection, или отправить job на удаление
           }
         }
       });
     } catch (err) {
       console.error("sendMulticast error:", err);
-      // продолжим следующие батчи
     }
   }
+
   return { successCount: success };
 }
 
-// Обработчик нового документа (добавления)
+// Обработчик нового документа
 async function handleNewDoc(doc) {
   const docRef = doc.ref;
   const data = doc.data();
   if (!data) return;
 
-  // Если уже отмечен как notified — игнорируем
   if (data[NOTIFIED_FIELD]) return;
 
-  // Попытка claim'а: только тот инстанс, который успешно взял claim, отправляет уведомление
   const claimed = await tryClaimDoc(docRef);
   if (!claimed) return;
 
-  // Собираем токены
   const tokens = await getTokensForDoc(data);
   if (!tokens || tokens.length === 0) {
     console.log("No tokens for doc:", docRef.id);
-    // можно снять claim / пометить, если требуется
     await docRef.update({ [CLAIM_FIELD]: admin.firestore.FieldValue.delete() });
     return;
   }
 
-  // Сформируем сообщение (настраивай под себя)
   const messagePayload = {
     notification: {
       title: "📁 Новый файл",
@@ -144,15 +139,14 @@ async function handleNewDoc(doc) {
   const result = await sendNotificationsToTokens(tokens, messagePayload);
   console.log(`Sent ${result.successCount} notifications for doc ${docRef.id}`);
 
-  // Пометка как отправлено
   await markNotified(docRef);
 }
 
-// Прослушивание изменений коллекции — добро для небольших нагрузок
+// Прослушивание коллекции
 function startListener() {
   console.log(`Starting listener on collection "${WATCH_COLLECTION}"`);
   db.collection(WATCH_COLLECTION)
-    .where(NOTIFIED_FIELD, "==", false) // слушаем только те, которые ещё не уведомлены (если поле есть)
+    .where(NOTIFIED_FIELD, "==", false)
     .onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === "added") {
@@ -161,14 +155,13 @@ function startListener() {
       });
     }, (err) => {
       console.error("onSnapshot listener error:", err);
-      // при желании имплементировать реконнект / alert
     });
 }
 
-// Запуск listener'а после инициализации
+// Запуск listener
 startListener();
 
-// HTTP endpoint для ручного теста/фронтенда (опционально)
+// HTTP endpoint для теста
 app.post("/send-notification-test", async (req, res) => {
   const { tokens, title, body } = req.body;
   if (!tokens || !tokens.length) return res.status(400).json({ error: "No tokens" });
