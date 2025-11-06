@@ -161,8 +161,26 @@ function startListener() {
   });
 }
 
-// === Запуск ===
+// === Пинги сервера, чтобы не засыпал ===
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || "http://localhost:3000";
+const PING_INTERVAL = 5 * 60 * 1000; // 5 минут
+
+function startSelfPings() {
+  setInterval(async () => {
+    try {
+      const res = await fetch(SELF_URL);
+      console.log(`🏓 Пинг сервера: ${res.status}`);
+    } catch (err) {
+      console.error("❌ Ошибка пинга сервера:", err);
+    }
+  }, PING_INTERVAL);
+}
+
+// === Запуск сервера ===
+app.get("/", (req, res) => res.send("Server is alive 🚀"));
+
 startListener();
+startSelfPings();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
