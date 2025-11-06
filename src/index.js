@@ -96,8 +96,8 @@ async function handleNewMessage(chatId, messageDoc) {
   const data = messageDoc.data();
   if (!data) return;
 
-  const { senderUid, message } = data;
-  console.log(`💬 Новое сообщение в чате ${chatId} от ${senderUid}:`, message);
+  const { senderUid, messageText } = data;
+  console.log(`💬 Новое сообщение в чате ${chatId} от ${senderUid}:`, messageText);
 
   // Получаем токены всех участников чата, кроме отправителя
   const tokens = await getTokensForChatParticipants(chatId, senderUid);
@@ -106,10 +106,20 @@ async function handleNewMessage(chatId, messageDoc) {
     return;
   }
 
+let senderName = senderUid;
+  try {
+    const senderSnap = await db.collection("Users").doc(senderUid).get();
+    if (senderSnap.exists && senderSnap.data().name) {
+      senderName = senderSnap.data().name;
+    }
+  } catch (e) {
+    console.warn("⚠️ Не удалось получить имя отправителя:", e);
+  }
+
   const messagePayload = {
     notification: {
-      title: "💬 Новое сообщение",
-      body: message || "У вас новое сообщение",
+      title: senderName,
+      body: messageText ,
     },
       android: {
         priority: "high",
