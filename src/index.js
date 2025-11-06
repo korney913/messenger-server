@@ -76,7 +76,6 @@ async function sendNotificationsToTokens(tokens, messagePayload) {
     const batch = tokens.slice(i, i + MAX_BATCH);
     const multicast = {
       tokens: batch,
-      notification: messagePayload.notification,
       android: messagePayload.android,
       data: messagePayload.data,
     };
@@ -106,14 +105,17 @@ async function handleNewMessage(chatId, messageDoc) {
     return;
   }
 
-  const messagePayload = {
-    notification: {
-      title: "💬 Новое сообщение",
-      body: message || "У вас новое сообщение",
-    },
-    android: { priority: "high" },
-    data: { chatId, senderUid },
-  };
+const messagePayload = {
+  data: {
+    title: "💬 Новое сообщение",
+    body: message || "У вас новое сообщение",
+    chatId,
+    senderUid,
+  },
+  android: {
+    priority: "high",
+  },
+};
 
   const result = await sendNotificationsToTokens(tokens, messagePayload);
   console.log(`✅ Уведомление отправлено (${result.successCount}) для чата ${chatId}`);
