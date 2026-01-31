@@ -49,18 +49,28 @@ async function getTokensForChatParticipants(chatId, senderUid) {
 
     console.log(`👥 Получатели (${receivers.length}):`, receivers);
 
-    const tokens = [];
+    const allTokens = [];
     for (const uid of receivers) {
       const userSnap = await db.collection("Users").doc(uid).get();
-      if (userSnap.exists && userSnap.data().token) {
-        tokens.push(userSnap.data().token);
+      if (userSnap.exists) {
+        const userData = userSnap.data();
+        // Раньше было: if (userData.token) tokens.push(userData.token)
+        // Теперь: берем массив tokens
+        const userTokens = userData.tokens || [];
+        if (Array.isArray(userTokens)) {
+          userTokens.forEach(t => {
+            if (t && t.trim() !== "") {
+              allTokens.push(t);
+            }
+          });
+        }
       } else {
-        console.log(`⚠️ Нет токена у пользователя ${uid}`);
+        console.log(`⚠️ Пользователь ${uid} не найден в БД`);
       }
     }
 
-    console.log(`✅ Получено ${tokens.length} токенов`);
-    return tokens;
+    console.log(`✅ Всего собрано ${allTokens.length} токенов для всех устройств получателей`);
+    return allTokens;
   } catch (err) {
     console.error("❌ Ошибка при получении токенов:", err);
     return [];
